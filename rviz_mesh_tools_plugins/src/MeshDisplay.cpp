@@ -82,6 +82,7 @@
 #include "rclcpp/executor.hpp"
 #include "rmw/validate_full_topic_name.h"
 
+#include "rclcpp/rclcpp.hpp"
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -104,6 +105,8 @@ MeshDisplay::MeshDisplay()
 , m_ignoreMsgs(false)
 , m_meshQos(rclcpp::SystemDefaultsQoS())
 , m_vertexColorsQos(rclcpp::SystemDefaultsQoS())
+, m_materialsQos(rclcpp::SystemDefaultsQoS())
+, m_texturesQos(rclcpp::SystemDefaultsQoS())
 , m_vertexCostsQos(rclcpp::SystemDefaultsQoS())
 {
   // mesh topic
@@ -160,9 +163,25 @@ MeshDisplay::MeshDisplay()
       m_showTexturedFacesOnly = new rviz_common::properties::BoolProperty("Show textured faces only", false, "Show textured faces only",
                                                        m_displayType, SLOT(updateMeshMaterial()), this);
 
+      // materials: either topic or service
+      m_materialsTopic = new rviz_common::properties::RosTopicProperty(
+          "Materials Topic", "",
+          QString::fromStdString(rosidl_generator_traits::name<mesh_msgs::msg::MeshMaterialsStamped>()),
+          "Materials topic to subscribe to.", m_displayType, SLOT(updateMaterialsSubscription()), this);
+
+      m_materialsTopicQos = new rviz_common::properties::QosProfileProperty(m_materialsTopic, m_materialsQos);
+
       m_materialServiceName = new rviz_common::properties::StringProperty("Material Service Name", "get_materials",
                                                        "Name of the Matrial Service to request Materials from.",
                                                        m_displayType, SLOT(updateMaterialAndTextureServices()), this);
+
+      // textures: either topic or service
+      m_texturesTopic = new rviz_common::properties::RosTopicProperty(
+          "Textures Topic", "",
+          QString::fromStdString(rosidl_generator_traits::name<mesh_msgs::msg::MeshTexture>()),
+          "Textures topic to subscribe to.", m_displayType, SLOT(updateTexturesSubscription()), this);
+
+      m_texturesTopicQos = new rviz_common::properties::QosProfileProperty(m_texturesTopic, m_texturesQos);
 
       m_textureServiceName = new rviz_common::properties::StringProperty("Texture Service Name", "get_texture",
                                                       "Name of the Texture Service to request Textures from.",
@@ -261,6 +280,8 @@ void MeshDisplay::onInitialize()
 
   m_meshTopic->initialize(context_->getRosNodeAbstraction());
   m_vertexColorsTopic->initialize(context_->getRosNodeAbstraction());
+  m_materialsTopic->initialize(context_->getRosNodeAbstraction());
+  m_texturesTopic->initialize(context_->getRosNodeAbstraction());
   m_vertexCostsTopic->initialize(context_->getRosNodeAbstraction());
 
   m_meshTopicQos->initialize(
@@ -273,6 +294,18 @@ void MeshDisplay::onInitialize()
       [this](rclcpp::QoS profile) {
         m_vertexColorsQos = profile;
         updateVertexColorsSubscription();
+      });
+
+  m_materialsTopicQos->initialize(
+      [this](rclcpp::QoS profile) {
+        m_materialsQos = profile;
+        updateMaterialsSubscription();
+      });
+
+  m_texturesTopicQos->initialize(
+      [this](rclcpp::QoS profile) {
+        m_texturesQos = profile;
+        updateTexturesSubscription();
       });
 
   m_vertexCostsTopicQos->initialize(
@@ -383,10 +416,14 @@ void MeshDisplay::unsubscribe()
 {
   m_meshSubscriber.unsubscribe();
   m_vertexColorsSubscriber.unsubscribe();
+  m_materialsSubscriber.unsubscribe();
+  m_texturesSubscriber.unsubscribe();
   m_vertexCostsSubscriber.unsubscribe();
 
   m_tfMeshFilter.reset();
   m_colorsMsgCache.reset();
+  m_materialsMsgCache.reset();
+  m_texturesMsgCache.reset();
   m_costsMsgCache.reset();
 }
 
@@ -455,12 +492,14 @@ void MeshDisplay::setVertexNormals(vector<Normal>& vertexNormals)
   }
 }
 
-void MeshDisplay::setMaterials(vector<Material>& materials, vector<TexCoords>& texCoords)
+void MeshDisplay::setMaterials(const vector<Material>& materials, const vector<TexCoords>& texCoords)
 {
   std::shared_ptr<MeshVisual> visual = getLatestVisual();
   if (visual)
   {
+    std::cout << "SET VISUAL MATERIALS " << materials.size() << ", tex coords " << texCoords.size() << std::endl;
     visual->setMaterials(materials, texCoords);
+    std::cout << "done." << std::endl;
   }
   updateMeshMaterial();
 }
@@ -514,7 +553,9 @@ void MeshDisplay::updateDisplayType()
   m_vertexColorsTopic->hide();
   m_vertexColorServiceName->hide();
   m_showTexturedFacesOnly->hide();
+  m_materialsTopic->hide();
   m_materialServiceName->hide();
+  m_texturesTopic->hide();
   m_textureServiceName->hide();
   m_costColorType->hide();
   m_vertexCostsTopic->hide();
@@ -522,6 +563,7 @@ void MeshDisplay::updateDisplayType()
   m_costUseCustomLimits->hide();
   m_costLowerLimit->hide();
   m_costUpperLimit->hide();
+
   switch (m_displayType->getOptionInt())
   {
     default:
@@ -544,8 +586,19 @@ void MeshDisplay::updateDisplayType()
       m_showTexturedFacesOnly->show();
       if (!m_ignoreMsgs)
       {
+        m_materialsTopic->show();
         m_materialServiceName->show();
+        if (!m_materialsMsgCache) // checks whether we are not subscribed yet, avoids resetting the subscription when something else changes in the display type
+        {
+          updateMaterialsSubscription();
+        }
+
+        m_texturesTopic->show();
         m_textureServiceName->show();
+        if (!m_texturesMsgCache) // checks whether we are not subscribed yet, avoids resetting the subscription when something else changes in the display type
+        {
+          updateTexturesSubscription();
+        }
       }
       break;
     case display_type_option.vertex_costs:
@@ -692,6 +745,40 @@ void MeshDisplay::updateVertexColorsSubscription()
       m_colorsMsgCache->registerCallback(std::bind(&MeshDisplay::vertexColorsCallback, this, _1));
     } else {
       setStatus(rviz_common::properties::StatusProperty::Warn, "Topic", QString("Error subscribing: Empty color topic name"));
+    }
+  }
+}
+
+void MeshDisplay::updateMaterialsSubscription()
+{
+  if (!m_materialsTopic->getHidden())
+  {
+    if (!m_materialsTopic->getTopicStd().empty()) 
+    {
+      auto node = context_->getRosNodeAbstraction().lock()->get_raw_node();
+      m_materialsSubscriber.subscribe(node, m_materialsTopic->getTopicStd(), m_materialsQos.get_rmw_qos_profile());
+
+      m_materialsMsgCache = std::make_shared<message_filters::Cache<mesh_msgs::msg::MeshMaterialsStamped>>(m_materialsSubscriber, 1);
+      m_materialsMsgCache->registerCallback(std::bind(&MeshDisplay::materialsCallback, this, _1));
+    } else {
+      setStatus(rviz_common::properties::StatusProperty::Warn, "Topic", QString("Error subscribing: Empty materials topic name"));
+    }
+  }
+}
+
+void MeshDisplay::updateTexturesSubscription()
+{
+  if (!m_texturesTopic->getHidden())
+  {
+    if (!m_texturesTopic->getTopicStd().empty()) 
+    {
+      auto node = context_->getRosNodeAbstraction().lock()->get_raw_node();
+      m_texturesSubscriber.subscribe(node, m_texturesTopic->getTopicStd(), m_texturesQos.get_rmw_qos_profile());
+
+      m_texturesMsgCache = std::make_shared<message_filters::Cache<mesh_msgs::msg::MeshTexture>>(m_texturesSubscriber, 1);
+      m_texturesMsgCache->registerCallback(std::bind(&MeshDisplay::texturesCallback, this, _1));
+    } else {
+      setStatus(rviz_common::properties::StatusProperty::Warn, "Topic", QString("Error subscribing: Empty textures topic name"));
     }
   }
 }
@@ -949,6 +1036,110 @@ void MeshDisplay::vertexColorsCallback(
   setVertexColors(vertexColors);
 }
 
+
+static std::pair<std::vector<Material>, std::vector<TexCoords> > convertMaterialsToOgre(
+  const mesh_msgs::msg::MeshMaterials& materials_ros)
+{
+  std::vector<Material> materials;
+  
+  // materials
+  for (const mesh_msgs::msg::MeshMaterial& mat_ros : materials_ros.materials)
+  {
+    Material mat_ogre;
+    mat_ogre.textureIndex = mat_ros.texture_index;
+    mat_ogre.color = Color(mat_ros.color.r, mat_ros.color.g, mat_ros.color.b, mat_ros.color.a);
+    materials.push_back(mat_ogre);
+  }
+
+  // cluster
+  for (int i = 0; i < materials_ros.clusters.size(); i++)
+  {
+    const mesh_msgs::msg::MeshFaceCluster& clu = materials_ros.clusters[i];
+    uint32_t materialIndex = materials_ros.cluster_materials[i];
+    const mesh_msgs::msg::MeshMaterial& mat = materials_ros.materials[materialIndex];
+
+    for (uint32_t face_index : clu.face_indices)
+    {
+      materials[i].faceIndices.push_back(face_index);
+    }
+  }
+
+  // tex coords
+  std::vector<TexCoords> textureCoords;
+  for (const mesh_msgs::msg::MeshVertexTexCoords& coord : materials_ros.vertex_tex_coords)
+  {
+    textureCoords.push_back(TexCoords(coord.u, coord.v));
+  }
+
+  return {materials, textureCoords};
+}
+
+
+void MeshDisplay::materialsCallback(
+  const mesh_msgs::msg::MeshMaterialsStamped::ConstSharedPtr& materials_stamped)
+{
+  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "materialsCallback");
+
+  // if(!tmp_materials_set)
+  // {
+    RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "setting new materials");
+
+    // converting ros meshMaterialsStamped.mesh_materials to 
+    // -> ogre material
+    // -> ogre face indices
+    std::vector<Material> materials;
+    std::vector<TexCoords> textureCoords;
+    std::tie(materials, textureCoords) = convertMaterialsToOgre(materials_stamped->mesh_materials);
+
+
+    RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "convertMaterialsToOgre - done");
+
+
+    setMaterials(materials, textureCoords);
+
+    RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "setMaterials - done");
+
+    // tmp_materials_set = true;
+  // }
+
+  // TODO: checks?
+
+  // if (colorsStamped->uuid.compare(m_lastUuid) != 0)
+  // {
+  //   RCLCPP_WARN(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Received vertex colors, but its UUID does not match the latest mesh geometry UUID. Not updating colors.");
+  //   return;
+  // }
+
+  // std::vector<Color> vertexColors;
+  // for (const std_msgs::msg::ColorRGBA c : colorsStamped->mesh_vertex_colors.vertex_colors)
+  // {
+  //   Color color(c.r, c.g, c.b, c.a);
+  //   vertexColors.push_back(color);
+  // }
+
+
+
+  // setVertexColors(vertexColors);
+
+  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "materials set.");
+}
+
+void MeshDisplay::texturesCallback(
+  const mesh_msgs::msg::MeshTexture::ConstSharedPtr& textureMsg)
+{
+  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "texturesCallback");
+  Texture texture;
+  texture.width = textureMsg->image.width;
+  texture.height = textureMsg->image.height;
+  texture.channels = textureMsg->image.step;
+  texture.pixelFormat = textureMsg->image.encoding;
+  texture.data = textureMsg->image.data;
+  addTexture(texture, textureMsg->texture_index);
+
+  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "texture added.");
+}
+
+
 void MeshDisplay::vertexCostsCallback(
   const mesh_msgs::msg::MeshVertexCostsStamped::ConstSharedPtr& costsStamped)
 {
@@ -995,6 +1186,7 @@ void MeshDisplay::requestVertexColors(std::string uuid)
   }
 }
 
+
 void MeshDisplay::requestMaterials(std::string uuid)
 {
   if (m_ignoreMsgs)
@@ -1019,34 +1211,16 @@ void MeshDisplay::requestMaterials(std::string uuid)
     const mesh_msgs::msg::MeshMaterialsStamped& meshMaterialsStamped =
         res_materials->mesh_materials_stamped;
 
-    std::vector<Material> materials(meshMaterialsStamped.mesh_materials.materials.size());
-    for (int i = 0; i < meshMaterialsStamped.mesh_materials.materials.size(); i++)
-    {
-      const mesh_msgs::msg::MeshMaterial& mat = meshMaterialsStamped.mesh_materials.materials[i];
-      materials[i].textureIndex = mat.texture_index;
-      materials[i].color = Color(mat.color.r, mat.color.g, mat.color.b, mat.color.a);
-    }
-    for (int i = 0; i < meshMaterialsStamped.mesh_materials.clusters.size(); i++)
-    {
-      const mesh_msgs::msg::MeshFaceCluster& clu = meshMaterialsStamped.mesh_materials.clusters[i];
-
-      uint32_t materialIndex = meshMaterialsStamped.mesh_materials.cluster_materials[i];
-      const mesh_msgs::msg::MeshMaterial& mat = meshMaterialsStamped.mesh_materials.materials[materialIndex];
-
-      for (uint32_t face_index : clu.face_indices)
-      {
-        materials[i].faceIndices.push_back(face_index);
-      }
-    }
-
+    // converting ros meshMaterialsStamped.mesh_materials to 
+    // -> ogre material
+    // -> ogre face indices
+    std::vector<Material> materials;
     std::vector<TexCoords> textureCoords;
-    for (const mesh_msgs::msg::MeshVertexTexCoords& coord : meshMaterialsStamped.mesh_materials.vertex_tex_coords)
-    {
-      textureCoords.push_back(TexCoords(coord.u, coord.v));
-    }
+    std::tie(materials, textureCoords) = convertMaterialsToOgre(meshMaterialsStamped.mesh_materials);
 
     setMaterials(materials, textureCoords);
 
+    // load textures
     for (mesh_msgs::msg::MeshMaterial material : meshMaterialsStamped.mesh_materials.materials)
     {
       if (material.has_texture)

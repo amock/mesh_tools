@@ -107,7 +107,7 @@ MeshVisual::MeshVisual(rviz_common::DisplayContext* context, size_t displayID, s
   , m_random(randomID)
   , m_normalsScalingFactor(1)
 {
-  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Creating MeshVisual %lu_TexturedMesh_%lu_%lu", m_prefix, m_postfix, m_random);
+  RCLCPP_DEBUG(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Creating MeshVisual %lu_TexturedMesh_%lu_%lu", m_prefix, m_postfix, m_random);
 
   // get or create the scene node
   Ogre::SceneManager* sceneManager = m_displayContext->getSceneManager();
@@ -161,7 +161,7 @@ MeshVisual::MeshVisual(rviz_common::DisplayContext* context, size_t displayID, s
 
 MeshVisual::~MeshVisual()
 {
-  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Destroying MeshVisual %lu_TexturedMesh_%lu_%lu", m_prefix, m_postfix, m_random);
+  RCLCPP_DEBUG(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Destroying MeshVisual %lu_TexturedMesh_%lu_%lu", m_prefix, m_postfix, m_random);
 
   reset();
 
@@ -192,7 +192,7 @@ MeshVisual::~MeshVisual()
 
 void MeshVisual::reset()
 {
-  RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Resetting MeshVisual %lu_TexturedMesh_%lu_%lu", m_prefix, m_postfix, m_random);
+  RCLCPP_DEBUG(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Resetting MeshVisual %lu_TexturedMesh_%lu_%lu", m_prefix, m_postfix, m_random);
 
   std::stringstream sstm;
 
@@ -202,7 +202,7 @@ void MeshVisual::reset()
     materialptr->unload();
     Ogre::MaterialManager::getSingleton().remove(materialptr);
   } else {
-    RCLCPP_ERROR_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Could not find material '" << sstm.str() << "' to unload. skipping.");
+    RCLCPP_DEBUG_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Could not find material '" << sstm.str() << "' to unload. skipping.");
     
     RCLCPP_DEBUG_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Available materials are:");
     auto mit = Ogre::MaterialManager::getSingleton().getResourceIterator();
@@ -226,7 +226,7 @@ void MeshVisual::reset()
       materialptr->unload();
       Ogre::MaterialManager::getSingleton().remove(materialptr);
     } else {
-      RCLCPP_ERROR_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Could not find material '" << sstm.str() << "' to unload. skipping");
+      RCLCPP_DEBUG_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Could not find material '" << sstm.str() << "' to unload. skipping");
     
       RCLCPP_DEBUG_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Available materials are:");
       auto mit = Ogre::MaterialManager::getSingleton().getResourceIterator();
@@ -247,7 +247,7 @@ void MeshVisual::reset()
     materialptr->unload();
     Ogre::MaterialManager::getSingleton().remove(materialptr);
   } else {
-    RCLCPP_ERROR_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Could not find material '" << sstm.str() << "' to unload. skipping");
+    RCLCPP_DEBUG_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Could not find material '" << sstm.str() << "' to unload. skipping");
   
     RCLCPP_DEBUG_STREAM(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Available materials are:");
     auto mit = Ogre::MaterialManager::getSingleton().getResourceIterator();
@@ -759,8 +759,10 @@ void MeshVisual::enteringTriangleMeshWithVertexCosts(const Geometry& mesh, const
   m_vertexCostsMesh->end();
 }
 
-void MeshVisual::enteringTexturedTriangleMesh(const Geometry& mesh, const vector<Material>& materials,
-                                                      const vector<TexCoords>& texCoords)
+void MeshVisual::enteringTexturedTriangleMesh(
+  const Geometry& mesh, 
+  const vector<Material>& materials,
+  const vector<TexCoords>& texCoords)
 {
   std::stringstream sstm;
   sstm << m_prefix << "_TexturedMesh_" << m_postfix << "_" << m_random << "NoTexCluMaterial_";
@@ -786,6 +788,8 @@ void MeshVisual::enteringTexturedTriangleMesh(const Geometry& mesh, const vector
     if (hasTexture)
     {
       uint32_t textureIndex = *(material.textureIndex);
+      std::cout << "Loading texture with index " << textureIndex << std::endl;
+
       std::stringstream sstm;
       sstm << m_prefix << "_TexturedMesh_" << m_postfix << "_" << m_random << "TextureMaterial_" << textureIndex;
       m_textureMaterials.push_back(Ogre::MaterialManager::getSingleton().create(
@@ -806,12 +810,14 @@ void MeshVisual::enteringTexturedTriangleMesh(const Geometry& mesh, const vector
       }
       else
       {
+        RCLCPP_INFO(rclcpp::get_logger("rviz_mesh_tools_plugins"), "loadImageIntoTextureMaterial(%u)", textureIndex);
         loadImageIntoTextureMaterial(textureIndex);
       }
     }
 
     if (hasTexture)
     {
+      std::cout << "CREATE MESH" << std::endl;
       uint32_t textureIndex = *(material.textureIndex);
       // start entering data
       m_texturedMesh->begin(m_textureMaterials[textureIndex]->getName(), Ogre::RenderOperation::OT_TRIANGLE_LIST);
@@ -828,10 +834,12 @@ void MeshVisual::enteringTexturedTriangleMesh(const Geometry& mesh, const vector
         {
           uint32_t vertexIndex = mesh.faces[faceIndex].vertexIndices[j];
           // write vertex positions
-          m_texturedMesh->position(mesh.vertices[vertexIndex].x, mesh.vertices[vertexIndex].y,
+          m_texturedMesh->position(mesh.vertices[vertexIndex].x, 
+                                   mesh.vertices[vertexIndex].y,
                                    mesh.vertices[vertexIndex].z);
+                                   
           // write texture coordinates
-          m_texturedMesh->textureCoord(texCoords[vertexIndex].u, 1 - texCoords[vertexIndex].v);
+          m_texturedMesh->textureCoord(texCoords[vertexIndex].u, 1.0 - texCoords[vertexIndex].v);
         }
         // write the three triangle vertex indices
         m_texturedMesh->triangle(triangleVertexCount, triangleVertexCount + 1, triangleVertexCount + 2);
@@ -1060,7 +1068,9 @@ bool MeshVisual::setVertexCosts(const std::vector<float>& vertexCosts, int costC
   return true;
 }
 
-bool MeshVisual::setMaterials(const vector<Material>& materials, const vector<TexCoords>& texCoords)
+bool MeshVisual::setMaterials(
+  const vector<Material>& materials, 
+  const vector<TexCoords>& texCoords)
 {
   // check if there is a material index for each cluster
   if (materials.size() > 0)
@@ -1087,7 +1097,10 @@ bool MeshVisual::setMaterials(const vector<Material>& materials, const vector<Te
     RCLCPP_WARN(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Received not as much texture coords as vertices, ignoring texture coords!");
   }
 
+  std::cout << "enteringTexturedTriangleMesh" << std::endl;
   enteringTexturedTriangleMesh(m_geometry, materials, texCoords);
+
+  std::cout << "done." << std::endl;
 
   return true;
 }
@@ -1120,6 +1133,7 @@ bool MeshVisual::addTexture(Texture& texture, uint32_t textureIndex)
 
 Ogre::PixelFormat MeshVisual::getOgrePixelFormatFromRosString(std::string encoding)
 {
+  // TODO: use e.g. sensor_msgs::image_encodings::RGBA8 instead
   if (encoding == "rgba8")
   {
     return Ogre::PF_BYTE_RGBA;
@@ -1127,6 +1141,14 @@ Ogre::PixelFormat MeshVisual::getOgrePixelFormatFromRosString(std::string encodi
   else if (encoding == "rgb8")
   {
     return Ogre::PF_BYTE_RGB;
+  } 
+  else if(encoding == "bgra8")
+  {
+    return Ogre::PF_BYTE_BGRA;
+  }
+  else if(encoding == "bgr8")
+  {
+    return Ogre::PF_BYTE_BGR;
   }
 
   RCLCPP_WARN(rclcpp::get_logger("rviz_mesh_tools_plugins"), "Unknown texture encoding! Using Ogre::PF_UNKNOWN");

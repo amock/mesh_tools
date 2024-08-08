@@ -219,7 +219,7 @@ public:
    * @param materials The materials
    * @param texCoords The texture coordinates
    */
-  void setMaterials(vector<Material>& materials, vector<TexCoords>& texCoords);
+  void setMaterials(const vector<Material>& materials, const vector<TexCoords>& texCoords);
 
   /**
    * @brief Add a texture
@@ -287,6 +287,16 @@ private Q_SLOTS:
   void updateVertexColorsSubscription();
 
   /**
+   * @brief Updates the subscribed vertex colors topic.
+   */
+  void updateTexturesSubscription();
+
+  /**
+   * @brief Updates the subscribed vertex colors topic.
+   */
+  void updateMaterialsSubscription();
+
+  /**
    * @brief Updates the subscribed vertex costs topic.
    */
   void updateVertexCostsSubscription();
@@ -329,6 +339,19 @@ private:
    * @param colorsStamped The vertex colors
    */
   void vertexColorsCallback(const mesh_msgs::msg::MeshVertexColorsStamped::ConstSharedPtr& colorsStamped);
+
+  /**
+   * @brief Handler for incoming materials messages. Validate data and update mesh
+   * @param materials The materials
+   */
+  void materialsCallback(const mesh_msgs::msg::MeshMaterialsStamped::ConstSharedPtr& materials);
+
+
+  /**
+   * @brief Handler for incoming texture messages. Validate data and update mesh
+   * @param materials The texture
+   */
+  void texturesCallback(const mesh_msgs::msg::MeshTexture::ConstSharedPtr& texture);
 
   /**
    * @brief Handler for incoming vertex cost messages. Validate data and update mesh
@@ -380,10 +403,17 @@ private:
   /// Client to request the geometry
   rclcpp::Client<mesh_msgs::srv::GetGeometry>::SharedPtr m_geometryClient;
 
+
+  bool tmp_materials_set = false;
+
   /// Subscriber for meshMsg
   message_filters::Subscriber<mesh_msgs::msg::MeshGeometryStamped> m_meshSubscriber;
   /// Subscriber for vertex colors
   message_filters::Subscriber<mesh_msgs::msg::MeshVertexColorsStamped> m_vertexColorsSubscriber;
+  /// Subscriber for materials
+  message_filters::Subscriber<mesh_msgs::msg::MeshMaterialsStamped> m_materialsSubscriber;
+  /// Subscriber for textures
+  message_filters::Subscriber<mesh_msgs::msg::MeshTexture> m_texturesSubscriber;
   /// Subscriber for vertex costs
   message_filters::Subscriber<mesh_msgs::msg::MeshVertexCostsStamped> m_vertexCostsSubscriber;
 
@@ -392,6 +422,13 @@ private:
 
   /// Cache for vertex colors, useful for when color information arrives before the mesh geometry
   std::shared_ptr<message_filters::Cache<mesh_msgs::msg::MeshVertexColorsStamped>> m_colorsMsgCache;
+
+  /// Cache for materials, useful for when materials arrive before the mesh geometry
+  std::shared_ptr<message_filters::Cache<mesh_msgs::msg::MeshMaterialsStamped>> m_materialsMsgCache;
+
+  /// Cache for textures, useful for when texture arrives before the mesh geometry
+  std::shared_ptr<message_filters::Cache<mesh_msgs::msg::MeshTexture>> m_texturesMsgCache;
+
   /// Cache for vertex costs, useful for when cost information arrives before the mesh geometry
   std::shared_ptr<message_filters::Cache<mesh_msgs::msg::MeshVertexCostsStamped>> m_costsMsgCache;
 
@@ -432,8 +469,18 @@ private:
   /// Property to only show textured faces when texturizing is enabled
   rviz_common::properties::BoolProperty* m_showTexturedFacesOnly;
 
+  /// Properties to handle topic for materials
+  rviz_common::properties::RosTopicProperty* m_materialsTopic;
+  rviz_common::properties::QosProfileProperty* m_materialsTopicQos;
+  rclcpp::QoS m_materialsQos;
+
   /// Property to handle service name for materials
   rviz_common::properties::StringProperty* m_materialServiceName;
+
+  /// Properties to handle topic for materials
+  rviz_common::properties::RosTopicProperty* m_texturesTopic;
+  rviz_common::properties::QosProfileProperty* m_texturesTopicQos;
+  rclcpp::QoS m_texturesQos;
 
   /// Property to handle service name for textures
   rviz_common::properties::StringProperty* m_textureServiceName;
